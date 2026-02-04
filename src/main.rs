@@ -1,10 +1,14 @@
 use crate::device::{ConnectionParams, Device};
 use futures_util::StreamExt;
 use igloo_interface::ipc::{self, IglooMessage};
-use ini::Ini;
 use rustc_hash::{FxBuildHasher, FxHashMap};
-use std::{collections::HashMap, error::Error, sync::Arc};
-use tokio::{fs, sync::Mutex};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, error::Error, io::SeekFrom, path::PathBuf, sync::Arc};
+use tokio::{
+    fs::{self, File},
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
+    sync::Mutex,
+};
 
 pub mod connection;
 pub mod device;
@@ -16,22 +20,29 @@ pub mod model {
     include!(concat!(env!("OUT_DIR"), "/model.rs"));
 }
 
-pub const CONFIG_FILE: &str = "./data/config.ini";
+pub const CONFIG_FILE: &str = "config.toml";
 
 /// Eventually this will be described in the Igloo.toml file
 pub const ADD_DEVICE: u16 = 32;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug)]
+pub struct ConfigManager {
+    file: File,
+    config: Config,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// maps Persisnt Igloo Device ID -> Connection Params
-    devices: HashMap<u64, ConnectionParams>,
+    #[serde(rename = "device")]
+    devices: FxHashMap<u64, ConnectionParams>,
 }
 
 pub type CommandAndPayload = (u16, Vec<u8>);
 
 #[tokio::main]
 async fn main() {
-    let mut config = Config::load().await.unwrap();
+    let mut cm = ConfigManager::load().await.unwrap();
 
     let (mut writer, mut reader) = ipc::connect()
         .await
@@ -61,7 +72,7 @@ async fn main() {
     let mut device_txs = HashMap::with_capacity_and_hasher(20, FxBuildHasher);
 
     // connect to devices in config
-    for (device_id, params) in config.devices.clone() {
+    for (device_id, params) in cm.config.devices.clone() {
         let (device_tx, deivce_rx) = kanal::bounded_async(50);
         device_txs.insert(device_id, device_tx);
         let mut device = Device::new(device_id, params);
@@ -104,8 +115,8 @@ async fn main() {
                 drop(pc);
 
                 // save to disk
-                config.devices.insert(did, device.params.clone());
-                config.save().await.unwrap();
+                cm.config.devices.insert(did, device.params.clone());
+                cm.save().await.unwrap();
 
                 // give actual ID now
                 device.id = did;
@@ -179,52 +190,43 @@ async fn main() {
     }
 }
 
-impl Config {
+impl ConfigManager {
     async fn load() -> Result<Self, Box<dyn Error>> {
-        let mut me = Self::default();
+        let path: PathBuf = [&ipc::get_data_path(), CONFIG_FILE].iter().collect();
 
-        let content = fs::read_to_string(CONFIG_FILE).await?;
-        let ini = Ini::load_from_str(&content)?;
-
-        for did_str in ini.sections() {
-            let Some(did_str) = did_str else { continue };
-            let did: u64 = did_str.parse()?;
-            let section = ini.section(Some(did_str)).unwrap();
-
-            me.devices.insert(
-                did,
-                ConnectionParams {
-                    ip: section.get("ip").ok_or("Mising 'ip'")?.to_string(),
-                    name: section.get("name").map(|o| o.to_string()),
-                    noise_psk: section.get("noise_psk").map(|o| o.to_string()),
-                    password: section.get("password").map(|o| o.to_string()),
-                },
-            );
+        if !fs::try_exists(&path).await? {
+            fs::write(&path, "").await?;
         }
 
-        Ok(me)
+        let mut file = File::options().read(true).write(true).open(&path).await?;
+
+        let meta = file.metadata().await?;
+        if meta.is_dir() {
+            return Err(format!("{} should not be directory", path.to_string_lossy()).into());
+        }
+
+        if meta.is_symlink() {
+            let sym_meta = fs::symlink_metadata(&path).await?;
+            if sym_meta.is_dir() {
+                return Err(format!("{} should not be directory", path.to_string_lossy()).into());
+            }
+        }
+
+        let mut content = String::with_capacity(meta.len() as usize);
+        file.read_to_string(&mut content).await?;
+
+        Ok(Self {
+            file,
+            config: toml::from_str(&content)?,
+        })
     }
 
-    async fn save(&self) -> Result<(), Box<dyn Error>> {
-        let mut ini = Ini::new();
-
-        for (id, params) in &self.devices {
-            let mut section = ini.with_section(Some(id.to_string()));
-            section.set("ip", &params.ip);
-            if let Some(name) = &params.name {
-                section.set("name", name);
-            }
-            if let Some(noise_psk) = &params.noise_psk {
-                section.set("noise_psk", noise_psk);
-            }
-            if let Some(password) = &params.password {
-                section.set("password", password);
-            }
-        }
-
-        let mut buf = Vec::new();
-        ini.write_to(&mut buf)?;
-        fs::write(CONFIG_FILE, buf).await?;
+    async fn save(&mut self) -> Result<(), Box<dyn Error>> {
+        let content = toml::to_string_pretty(&self.config)?;
+        self.file.seek(SeekFrom::Start(0)).await?;
+        self.file.write_all(content.as_bytes()).await?;
+        self.file.flush().await?;
+        self.file.set_len(content.len() as u64).await?;
 
         Ok(())
     }

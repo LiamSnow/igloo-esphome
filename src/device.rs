@@ -1,6 +1,7 @@
 use bytes::BytesMut;
 use igloo_interface::{Component, ipc::IglooMessage};
 use prost::Message;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
@@ -19,11 +20,14 @@ use crate::{
     model::{EntityType, MessageType},
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionParams {
     pub ip: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub noise_psk: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
 
@@ -756,7 +760,7 @@ impl Device {
     pub async fn register_entity(
         &mut self,
         igloo_tx: &kanal::AsyncSender<IglooMessage>,
-        entity_name: String,
+        entity_id: String,
         key: u32,
         entity_type: EntityType,
         comps: Vec<Component>,
@@ -766,7 +770,7 @@ impl Device {
         igloo_tx
             .send(IglooMessage::RegisterEntity {
                 device: self.id,
-                entity_name,
+                entity_id,
                 entity_index,
             })
             .await?;
