@@ -1,5 +1,8 @@
 use bytes::BytesMut;
-use igloo_interface::{Component, ipc::IglooMessage};
+use igloo_interface::{
+    Component,
+    ipc::{AsyncWriteExtensionToIgloo, ExtensionToIgloo},
+};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -107,7 +110,7 @@ impl Device {
 
     pub async fn run(
         mut self,
-        igloo_tx: kanal::AsyncSender<IglooMessage>,
+        igloo_tx: kanal::AsyncSender<ExtensionToIgloo>,
         in_rx: kanal::AsyncReceiver<(usize, Vec<Component>)>,
     ) -> Result<(), DeviceError> {
         if !self.connected {
@@ -309,7 +312,7 @@ impl Device {
     #[inline]
     async fn process_msg(
         &mut self,
-        igloo_tx: &kanal::AsyncSender<IglooMessage>,
+        igloo_tx: &kanal::AsyncSender<ExtensionToIgloo>,
         msg_type: MessageType,
         msg: BytesMut,
     ) -> Result<(), DeviceError> {
@@ -358,7 +361,7 @@ impl Device {
     #[inline]
     pub async fn process_state_update(
         &mut self,
-        igloo_tx: &kanal::AsyncSender<IglooMessage>,
+        igloo_tx: &kanal::AsyncSender<ExtensionToIgloo>,
         msg_type: MessageType,
         msg: BytesMut,
     ) -> Result<(), DeviceError> {
@@ -458,7 +461,7 @@ impl Device {
 
     pub async fn apply_entity_update<T: EntityUpdate>(
         &self,
-        igloo_tx: &kanal::AsyncSender<IglooMessage>,
+        igloo_tx: &kanal::AsyncSender<ExtensionToIgloo>,
         update: T,
     ) -> Result<(), DeviceError> {
         if update.should_skip() {
@@ -471,11 +474,7 @@ impl Device {
         };
 
         igloo_tx
-            .send(IglooMessage::WriteComponents {
-                device: self.id,
-                entity: *entity,
-                comps: update.comps(),
-            })
+            .write_components(self.id, *entity, update.comps())
             .await?;
 
         Ok(())
@@ -483,7 +482,7 @@ impl Device {
 
     pub async fn register_entities(
         &mut self,
-        igloo_tx: &kanal::AsyncSender<IglooMessage>,
+        igloo_tx: &kanal::AsyncSender<ExtensionToIgloo>,
     ) -> Result<(), DeviceError> {
         self.send_msg(
             MessageType::ListEntitiesRequest,
@@ -759,7 +758,7 @@ impl Device {
 
     pub async fn register_entity(
         &mut self,
-        igloo_tx: &kanal::AsyncSender<IglooMessage>,
+        igloo_tx: &kanal::AsyncSender<ExtensionToIgloo>,
         entity_id: String,
         key: u32,
         entity_type: EntityType,
@@ -768,11 +767,7 @@ impl Device {
         let entity_index = self.next_entity_index;
 
         igloo_tx
-            .send(IglooMessage::RegisterEntity {
-                device: self.id,
-                entity_id,
-                entity_index,
-            })
+            .register_entity(self.id, entity_id, entity_index)
             .await?;
 
         self.entity_key_to_index.insert(key, self.next_entity_index);
@@ -780,11 +775,7 @@ impl Device {
         self.next_entity_index += 1;
 
         igloo_tx
-            .send(IglooMessage::WriteComponents {
-                device: self.id,
-                entity: entity_index,
-                comps,
-            })
+            .write_components(self.id, entity_index, comps)
             .await?;
 
         Ok(entity_index)

@@ -140,8 +140,8 @@ impl NoiseConnection {
         let mut key = [0u8; 32];
         BASE64_STANDARD.decode_slice(noise_psk, &mut key)?;
         Ok(snow::Builder::new(NOISE_PARAMS.parse()?)
-            .psk(0, &key)
-            .prologue(NOISE_PROLOGUE)
+            .psk(0, &key)?
+            .prologue(NOISE_PROLOGUE)?
             .build_initiator()?)
     }
 

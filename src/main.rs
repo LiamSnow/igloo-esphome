@@ -1,6 +1,6 @@
 use crate::device::{ConnectionParams, Device};
-use futures_util::StreamExt;
-use igloo_interface::ipc::{self, IglooMessage};
+use futures_util::{SinkExt, StreamExt};
+use igloo_interface::ipc::{self, AsyncWriteExtensionToIgloo, IglooToExtension};
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, error::Error, io::SeekFrom, path::PathBuf, sync::Arc};
@@ -60,7 +60,7 @@ async fn main() {
                 }
             };
 
-            if let Err(e) = writer.write(&msg).await {
+            if let Err(e) = writer.send(msg).await {
                 eprintln!("Error writing message to Igloo: {e}");
             }
         }
@@ -103,9 +103,9 @@ async fn main() {
             }
         };
 
-        use IglooMessage::*;
+        use IglooToExtension::*;
         match msg {
-            DeviceCreated(name, did) => {
+            DeviceCreated { name, id: did } => {
                 // pull out pending device
                 let mut pc = pending_creation.lock().await;
                 let Some(mut device) = pc.remove(&name) else {
@@ -148,43 +148,24 @@ async fn main() {
                 }
             }
 
-            Custom { name, params } => {
-                if name != "Add Device" {
+            Custom { name, payload } => {
+                if name != "add_device" {
                     eprintln!("Unknown custom command '{name}'. Skipping..");
                     continue;
                 }
 
-                let Some(ip) = params.get("ip") else {
-                    eprintln!(
-                        "Parameter 'ip' must be specified for custom command 'Add Device'. Skipping.."
-                    );
-                    continue;
-                };
-
-                let params = ConnectionParams {
-                    ip: ip.clone(),
-                    noise_psk: params.get("noise_psk").cloned(),
-                    password: params.get("password").cloned(),
-                    name: params.get("name").cloned(),
-                };
+                let params: ConnectionParams = serde_json::from_value(payload).unwrap();
 
                 let mut device = Device::new(0, params);
                 let write_tx_1 = write_tx.clone();
                 let pending_creation_1 = pending_creation.clone();
                 tokio::spawn(async move {
                     let info = device.connect().await.unwrap();
-                    write_tx_1
-                        .send(IglooMessage::CreateDevice(info.name.clone()))
-                        .await
-                        .unwrap();
+                    write_tx_1.create_device(info.name.clone()).await.unwrap();
                     let mut pc = pending_creation_1.lock().await;
                     pc.insert(info.name, device);
                     drop(pc);
                 });
-            }
-
-            WhatsUpIgloo { .. } | CreateDevice(..) | RegisterEntity { .. } => {
-                eprintln!("Igloo unexpectedly sent client message. Skipping..");
             }
         }
     }

@@ -5,30 +5,30 @@ edition = "2024"
 
 [dependencies]
 base64 = "0.22.1"
-bytes = "1.9.0"
-memchr = "2.7.4"
-prost = "0.13.4"
-snow = "0.9.6"
-thiserror = "2.0.11"
-tokio = { version = "1.47.1", features = ["bytes", "full"] }
-igloo-interface = { path = "../igloo/interface/", features = ["ipc"] }
+bytes = "1.11.1"
+memchr = "2.7.6"
+prost = "0.14.3"
+snow = "0.10.0"
+thiserror = "2.0.18"
+tokio = { version = "1.49.0", features = ["bytes", "full"] }
+igloo-interface = { path = "../igloo/interface/", features = ["ipc", "kanal"] }
 strum = "0.27.2"
 strum_macros = "0.27.2"
 async-trait = "0.1.89"
-tokio-util = { version = "0.7.16", features = ["codec"] }
+tokio-util = { version = "0.7.18", features = ["codec"] }
 futures-util = "0.3.31"
-bincode = "2.0.1"
 kanal = "0.1.1"
 rustc-hash = "2.1.1"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "0.9.11"
 serde_with = "3.16.1"
+serde_json = "1.0.149"
 
 [build-dependencies]
-prost-build = "0.13.4"
-quote = "1.0.40"
-proc-macro2 = "1.0.101"
-syn = { version = "2.0.106", features = ["full", "parsing"] }
+prost-build = "0.14.3"
+quote = "1.0.44"
+proc-macro2 = "1.0.106"
+syn = { version = "2.0.114", features = ["full", "parsing"] }
 prettyplease = "0.2.37"
 
 [profile.release]
